@@ -1,0 +1,48 @@
+name: nftables-operator
+type: charm
+title: nftables Operator
+summary: Apply an operator-provided nftables ruleset to each related machine.
+description: |
+  A minimal subordinate charm that manages /etc/nftables.conf on every machine
+  it is deployed to. The operator supplies a complete nftables ruleset via the
+  'rules' config option; the charm validates it with 'nft -c', writes it to
+  /etc/nftables.conf, and applies it with 'nft -f'. Persistence across reboot
+  is provided by the packaged nftables.service.
+
+subordinate: true
+
+requires:
+  juju-info:
+    interface: juju-info
+    scope: container
+
+config:
+  options:
+    rules:
+      type: string
+      default: ""
+      description: |
+        A complete nftables ruleset, written verbatim to /etc/nftables.conf and
+        applied with 'nft -f'. Must be self-contained and idempotent: begin the
+        ruleset with 'flush ruleset' so re-application is safe. If empty, the
+        charm makes no changes and reports blocked status. Invalid rulesets are
+        rejected (blocked status) without altering the running firewall.
+
+platforms:
+  ubuntu@20.04:amd64:
+  ubuntu@22.04:amd64:
+  ubuntu@24.04:amd64:
+  ubuntu@20.04:arm64:
+  ubuntu@22.04:arm64:
+  ubuntu@24.04:arm64:
+  ubuntu@20.04:s390x:
+  ubuntu@22.04:s390x:
+  ubuntu@24.04:s390x:
+  ubuntu@20.04:ppc64el:
+  ubuntu@22.04:ppc64el:
+  ubuntu@24.04:ppc64el:
+
+parts:
+  charm:
+    plugin: charm
+    source: .

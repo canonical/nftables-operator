@@ -1,0 +1,40 @@
+[project]
+name = "nftables-operator"
+version = "0.1.0"
+description = "A subordinate charm that applies an operator-provided nftables ruleset."
+requires-python = ">=3.10"
+dependencies = ["ops>=2.17"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ops[testing]>=2.17",
+    "jubilant",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# CPY (flake8-copyright) is a preview rule; enable preview so it runs.
+preview = true
+# E/W pycodestyle, F pyflakes, I isort, D pydocstyle, N pep8-naming,
+# UP pyupgrade, CPY flake8-copyright.
+select = ["E", "W", "F", "I", "D", "N", "UP", "CPY"]
+ignore = ["D107"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D100", "D101", "D102", "D103", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-copyright]
+notice-rgx = "Copyright\\s\\d{4}(-\\d{4})?\\s+Canonical Ltd\\."
+
+[tool.pytest.ini_options]
+addopts = "-v"
+pythonpath = ["src"]
