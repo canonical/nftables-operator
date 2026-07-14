@@ -28,6 +28,14 @@ config:
         charm makes no changes and reports blocked status. Invalid rulesets are
         rejected (blocked status) without altering the running firewall.
 
+actions:
+  reapply:
+    description: |
+      Re-validate and re-apply the configured nftables ruleset, even when
+      /etc/nftables.conf already matches it. Use this to restore the firewall
+      after the live ruleset was changed outside the charm. Fails if no rules
+      are configured or if the ruleset is invalid or cannot be applied.
+
 platforms:
   ubuntu@20.04:amd64:
   ubuntu@22.04:amd64:

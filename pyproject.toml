@@ -38,3 +38,6 @@ notice-rgx = "Copyright\\s\\d{4}(-\\d{4})?\\s+Canonical Ltd\\."
 [tool.pytest.ini_options]
 addopts = "-v"
 pythonpath = ["src"]
+
+[tool.pyright]
+typeCheckingMode = "standard"

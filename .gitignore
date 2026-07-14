@@ -1,0 +1,29 @@
+# Python Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test files and directories
+.pytest_cache/
+.coverage*
+.tox
+
+# python virtual environments (for local dev)
+.venv
+venv
+env
+
+# Build artifacts
+*.charm
+
+# python build artifacts
+deb_dist/
+dist/
+*.egg-info/
+
+# Log files
+*.log
+
+# general backup files
+*~
+*.bak

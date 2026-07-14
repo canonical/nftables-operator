@@ -58,6 +58,11 @@ the machine to its pre-charm state. This keeps behaviour predictable and, for a
 firewall, fail-closed: rules stay in force until a human deliberately changes
 them.
 
+The charm re-checks its state periodically (on Juju's `update-status` hook) and
+re-applies the rules only when the desired ruleset differs from what is already
+in `/etc/nftables.conf`. When they match it does nothing, so the live ruleset
+(and any runtime state such as dynamic sets and counters) is left alone.
+
 - Clearing the config (`juju config nftables-operator rules=""`) returns the
   unit to `blocked` and leaves the last-applied ruleset in place.
 - Removing the charm leaves the nftables package installed and the last-applied
@@ -71,6 +76,22 @@ them.
 - `rules` (string, default `""`): a complete nftables ruleset written verbatim
   to `/etc/nftables.conf`. Must be self-contained and begin with
   `flush ruleset`.
+
+## Actions
+
+- `reapply`: force the configured ruleset to be re-validated and re-applied, even
+  when `/etc/nftables.conf` already matches it. The periodic reconcile skips
+  re-applying when the file is up to date, so it will not notice if the live
+  ruleset was changed outside the charm (for example a manual `nft flush
+  ruleset`). Run this action to restore the firewall in that case. Each unit
+  manages its own machine, so target the affected unit (or every unit):
+
+  ```
+  juju run nftables-operator/0 reapply
+  ```
+
+  It fails if no rules are configured, or if the ruleset is invalid or cannot be
+  applied.
 
 ## Relations
 
