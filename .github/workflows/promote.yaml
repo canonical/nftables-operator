@@ -1,0 +1,45 @@
+name: Promote charm
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel-promotion:
+        description: 'Channel Promotion, e.g. latest/edge -> latest/candidate'
+        required: true
+        type: choice
+        options:
+          - 'latest/edge -> latest/candidate'
+          - 'latest/candidate -> latest/stable'
+
+permissions:
+  contents: read
+
+jobs:
+  promote-charm:
+    name: Promote charm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set channels
+        id: set-channels
+        # Pass the (untrusted) workflow input through the environment rather than
+        # interpolating it into the script, to avoid shell injection.
+        env:
+          CHANNEL_PROMOTION: ${{ github.event.inputs.channel-promotion }}
+        run: |
+          origin=$(echo "$CHANNEL_PROMOTION" | sed 's/\s*->.*//')
+          destination=$(echo "$CHANNEL_PROMOTION" | sed 's/.*->\s*//')
+          echo "destination-channel=$destination" >> "$GITHUB_OUTPUT"
+          echo "origin-channel=$origin" >> "$GITHUB_OUTPUT"
+
+      - name: Promote charm to channel
+        uses: canonical/charming-actions/promote-charm@1753e0803f70445132e92acd45c905aba6473225  # 2.7.0
+        with:
+          credentials: ${{ secrets.CHARMHUB_TOKEN }}
+          destination-channel: ${{ steps.set-channels.outputs.destination-channel }}
+          origin-channel: ${{ steps.set-channels.outputs.origin-channel }}
+          charmcraft-channel: "latest/stable"
