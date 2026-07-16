@@ -23,18 +23,29 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install charmcraft
+        run: sudo snap install charmcraft --classic --channel 3.x/stable
+
       - name: Download the tested charms
         uses: actions/download-artifact@v8
         with:
           pattern: built_charms_*
           merge-multiple: true
 
-      - name: List the names of the tested charms
-        run: echo "CHARM_NAMES=$(ls *.charm | paste -sd ,)" | tee -a "$GITHUB_ENV"
-
-      - name: Upload to Charmhub
-        uses: canonical/charming-actions/upload-charm@1753e0803f70445132e92acd45c905aba6473225  # 2.7.0
-        with:
-          credentials: "${{ secrets.CHARMHUB_TOKEN }}"
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-          built-charm-path: "${{ env.CHARM_NAMES }}"
+      - name: Upload and release every base to Charmhub
+        # charmcraft emits one .charm per base; upload each and release it to
+        # latest/edge so the channel serves the right revision for every base.
+        env:
+          CHARMCRAFT_AUTH: ${{ secrets.CHARMHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          charms=(*.charm)
+          if [ ${#charms[@]} -eq 0 ]; then
+            echo "error: no charms found to publish" >&2
+            exit 1
+          fi
+          for charm in "${charms[@]}"; do
+            echo "::group::publish ${charm}"
+            charmcraft upload "${charm}" --release latest/edge
+            echo "::endgroup::"
+          done
