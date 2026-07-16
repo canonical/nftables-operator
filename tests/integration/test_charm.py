@@ -28,7 +28,8 @@ import pytest
 APP = "nftables-operator"
 PRINCIPAL = "ubuntu"
 PRINCIPAL_UNIT = "ubuntu/0"
-BASE = "ubuntu@24.04"
+# The base to deploy on; CI runs the suite once per supported base via TEST_BASE.
+BASE = os.environ.get("TEST_BASE", "ubuntu@24.04")
 
 # Each ruleset starts with 'flush ruleset' (so re-application is idempotent) and
 # names its table distinctively so we can recognise it in 'nft list ruleset'.
@@ -54,14 +55,21 @@ INVALID = "this is definitely not a valid nftables ruleset"
 
 
 def _charm_path() -> str:
-    """Locate the packed charm via CHARM_PATH env var or a glob in the repo root."""
+    """Locate the packed charm for BASE.
+
+    'charmcraft pack' emits one file per platform (e.g. ...ubuntu@24.04...), so we
+    select the one matching the base the tests deploy on. CHARM_PATH may point at
+    a specific .charm file (used as-is) or a directory to search; it defaults to
+    the repo root.
+    """
+    version = BASE.split("@", 1)[1]  # e.g. "24.04"
     env = os.environ.get("CHARM_PATH")
-    if env:
+    if env and os.path.isfile(env):
         return env
-    repo_root = pathlib.Path(__file__).parents[2]
-    matches = sorted(glob.glob(str(repo_root / f"{APP}_*.charm")))
+    search_dir = env if env and os.path.isdir(env) else str(pathlib.Path(__file__).parents[2])
+    matches = sorted(glob.glob(os.path.join(search_dir, f"{APP}_*{version}*.charm")))
     if not matches:
-        pytest.skip(f"no packed charm in {repo_root}; set CHARM_PATH or run 'charmcraft pack'")
+        pytest.skip(f"no {version} charm in {search_dir}; run 'charmcraft pack'")
     return matches[0]
 
 
@@ -150,7 +158,8 @@ def test_nftables_operator_end_to_end():
     charm = _charm_path()
     with jubilant.temp_model() as juju:
         juju.deploy(PRINCIPAL, base=BASE)
-        juju.deploy(charm, base=BASE, num_units=0)
+        # Subordinate: deploy without units (they're added via the relation)
+        juju.deploy(charm, base=BASE)
         juju.integrate(APP, PRINCIPAL)
 
         # 1. Unconfigured: the subordinate blocks and applies nothing.
@@ -208,7 +217,8 @@ def test_firewall_allows_one_source_and_blocks_another():
     with jubilant.temp_model() as juju:
         juju.deploy(PRINCIPAL, "server", base=BASE)
         juju.deploy(PRINCIPAL, "client", base=BASE, num_units=2)
-        juju.deploy(charm, base=BASE, num_units=0)
+        # Subordinate: deploy without units (they're added via the relation).
+        juju.deploy(charm, base=BASE)
         juju.integrate(APP, "server")
 
         # Wait for the three machines. The subordinate stays blocked (no rules

@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
@@ -47,7 +47,7 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python ${{ matrix.python-version }}
@@ -59,15 +59,46 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit
 
-  integration:
-    name: Integration
+  build:
+    name: Build
     needs:
       - lint
       - unit
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up LXD and charmcraft
+        # Pinned to a commit SHA (supply-chain hardening); bump deliberately.
+        uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
+        with:
+          provider: "lxd"
+          juju-channel: "3.6/stable"
+          charmcraft-channel: "3.x/stable"
+      - name: Pack the charms
+        # Emits one .charm per platform (all supported bases).
+        run: charmcraft -v pack
+      - name: Upload the packed charms
+        uses: actions/upload-artifact@v7
+        with:
+          name: built_charms_amd64
+          path: ./*.charm
+
+  integration:
+    # Run the full suite once per supported base, in parallel.
+    name: Integration (${{ matrix.base }})
+    needs:
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ["22.04", "24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
@@ -75,22 +106,22 @@ jobs:
         with:
           python-version: "3.12"
       - name: Set up Juju and LXD
-        # Pinned to a commit SHA (supply-chain hardening); bump deliberately.
         uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
         with:
           provider: "lxd"
           juju-channel: "3.6/stable"
           charmcraft-channel: "3.x/stable"
-      - name: Pack the charm
-        run: charmcraft -v pack
-      - name: Upload the packed charm
-        uses: actions/upload-artifact@v7
+      - name: Download the packed charms
+        uses: actions/download-artifact@v8
         with:
           name: built_charms_amd64
-          path: ./*.charm
+          path: charms
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run integration tests
+        # CHARM_PATH is the charm directory; the tests pick the .charm matching
+        # the base under test (TEST_BASE).
         run: |
-          export CHARM_PATH="$(pwd)/$(ls *.charm | head -n1)"
+          export CHARM_PATH="$(pwd)/charms"
+          export TEST_BASE="ubuntu@${{ matrix.base }}"
           pytest tests/integration

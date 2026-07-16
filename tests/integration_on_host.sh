@@ -38,7 +38,9 @@ if [ ${#charms[@]} -eq 0 ] || [ -n "${REPACK:-}" ]; then
     charms=("${APP}"_*.charm)
 fi
 
-export CHARM_PATH="$(pwd)/${charms[0]}"
-echo "using charm: ${CHARM_PATH}"
+# Pass the directory (charmcraft emits one .charm per base); the tests pick the
+# file matching the base they deploy on.
+export CHARM_PATH="$(pwd)"
+echo "using charms in ${CHARM_PATH}: ${charms[*]}"
 
 exec python -m pytest tests/integration "$@"
