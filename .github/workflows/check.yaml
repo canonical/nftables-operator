@@ -85,7 +85,7 @@ jobs:
         with:
           provider: "lxd"
           juju-channel: "3.6/stable"
-          charmcraft-channel: "3.x/stable"
+          charmcraft-channel: "4.x/stable"
       - name: Pack the charms
         # Emits one .charm per platform (all supported bases).
         run: charmcraft -v pack
@@ -124,7 +124,7 @@ jobs:
         with:
           provider: "lxd"
           juju-channel: "3.6/stable"
-          charmcraft-channel: "3.x/stable"
+          charmcraft-channel: "4.x/stable"
       - name: Download the packed charms
         # Only needed when testing a locally built charm.
         if: ${{ ! inputs.channel }}

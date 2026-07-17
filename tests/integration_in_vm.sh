@@ -56,7 +56,7 @@ CPU="${CPU:-4}"
 MEMORY="${MEMORY:-8GiB}"
 DISK="${DISK:-30GiB}"
 JUJU_CHANNEL="${JUJU_CHANNEL:-3.6/stable}"
-CHARMCRAFT_CHANNEL="${CHARMCRAFT_CHANNEL:-3.x/stable}"
+CHARMCRAFT_CHANNEL="${CHARMCRAFT_CHANNEL:-4.x/stable}"
 
 log() { echo ">> $*"; }
 
@@ -325,7 +325,7 @@ destroy() {
 
 open_shell() {
     bring_up
-    exec lxp exec "${SANDBOX}" -- su - ubuntu
+    exec lxc --project "${PROJECT}" exec "${SANDBOX}" -- su - ubuntu
 }
 
 usage() {

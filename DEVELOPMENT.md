@@ -33,7 +33,7 @@ runtime dependencies from `pyproject.toml` + `uv.lock` (without the `dev` extra,
 so only `ops` and its dependencies ship in the charm):
 
 ```sh
-sudo snap install charmcraft --channel 3.x/stable --classic
+sudo snap install charmcraft --channel 4.x/stable --classic
 charmcraft pack
 ```
 

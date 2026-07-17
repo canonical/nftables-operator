@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
 
       - name: Install charmcraft
-        run: sudo snap install charmcraft --classic --channel 3.x/stable
+        run: sudo snap install charmcraft --classic --channel 4.x/stable
 
       - name: Download the tested charms
         uses: actions/download-artifact@v8
