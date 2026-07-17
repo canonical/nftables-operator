@@ -3,6 +3,14 @@ name: Tests
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: >-
+          Charmhub channel to run the integration tests against the published
+          charm (e.g. latest/edge). Leave empty to build and test this branch.
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [main]
@@ -24,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
@@ -47,50 +55,112 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run unit tests
         run: pytest tests/unit
 
-  integration:
-    name: Integration
+  build:
+    name: Build
+    # Skip the local build when testing an already-published charm.
+    if: ${{ ! inputs.channel }}
     needs:
       - lint
       - unit
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Reuse a previously packed charm when nothing that affects it changed.
+      # Bump the "v1" salt if the charmcraft toolchain (channel) changes.
+      - name: Restore the packed charms
+        id: charm-cache
+        uses: actions/cache@v6
+        with:
+          path: ./*.charm
+          key: charms-v1-${{ hashFiles('src/**', 'charmcraft.yaml', 'pyproject.toml', 'uv.lock') }}
+      - name: Set up LXD and charmcraft
+        if: steps.charm-cache.outputs.cache-hit != 'true'
+        uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
+        with:
+          provider: "lxd"
+          juju-channel: "3.6/stable"
+          charmcraft-channel: "4.x/stable"
+      - name: Pack the charms
+        # Emits one .charm per platform (all supported bases).
+        if: steps.charm-cache.outputs.cache-hit != 'true'
+        run: charmcraft -v pack
+      - name: Upload the packed charms
+        uses: actions/upload-artifact@v7
+        with:
+          name: built_charms_amd64
+          path: ./*.charm
+
+  integration:
+    # Run the full suite once per supported base, in parallel.
+    name: Integration (${{ matrix.base }})
+    needs:
+      - lint
+      - unit
+      - build
+    # Run after a successful build, or when the build was skipped to test a
+    # published charm; but not if lint/unit (or a requested build) failed.
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ["22.04", "24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Set up Juju and LXD
-        # Pinned to a commit SHA (supply-chain hardening); bump deliberately.
         uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
         with:
           provider: "lxd"
           juju-channel: "3.6/stable"
-          charmcraft-channel: "3.x/stable"
-      - name: Pack the charm
-        run: charmcraft -v pack
-      - name: Upload the packed charm
-        uses: actions/upload-artifact@v7
+          charmcraft-channel: "4.x/stable"
+      - name: Download the packed charms
+        # Only needed when testing a locally built charm.
+        if: ${{ ! inputs.channel }}
+        uses: actions/download-artifact@v8
         with:
           name: built_charms_amd64
-          path: ./*.charm
+          path: charms
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run integration tests
+        # With a channel, deploy the published charm; otherwise the local build.
+        # The base and (untrusted) channel go through the environment, not the
+        # script body, to avoid shell injection.
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          BASE: "ubuntu@${{ matrix.base }}"
         run: |
-          export CHARM_PATH="$(pwd)/$(ls *.charm | head -n1)"
+          export TEST_BASE="$BASE"
+          if [ -n "$CHANNEL" ]; then
+            printf 'testing the published charm from channel: %s\n' "$CHANNEL"
+            export CHARM_CHANNEL="$CHANNEL"
+          else
+            export CHARM_PATH="$(pwd)/charms"
+          fi
           pytest tests/integration

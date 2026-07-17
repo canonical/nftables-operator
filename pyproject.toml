@@ -13,6 +13,9 @@ dev = [
     "ruff",
 ]
 
+[tool.uv]
+package = false
+
 [tool.ruff]
 line-length = 99
 target-version = "py310"
