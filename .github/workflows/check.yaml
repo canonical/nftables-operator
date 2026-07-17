@@ -62,6 +62,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run unit tests
@@ -80,7 +82,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # Reuse a previously packed charm when nothing that affects it changed.
+      # Bump the "v1" salt if the charmcraft toolchain (channel) changes.
+      - name: Restore the packed charms
+        id: charm-cache
+        uses: actions/cache@v6
+        with:
+          path: ./*.charm
+          key: charms-v1-${{ hashFiles('src/**', 'charmcraft.yaml', 'pyproject.toml', 'uv.lock') }}
       - name: Set up LXD and charmcraft
+        if: steps.charm-cache.outputs.cache-hit != 'true'
         uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
         with:
           provider: "lxd"
@@ -88,6 +99,7 @@ jobs:
           charmcraft-channel: "4.x/stable"
       - name: Pack the charms
         # Emits one .charm per platform (all supported bases).
+        if: steps.charm-cache.outputs.cache-hit != 'true'
         run: charmcraft -v pack
       - name: Upload the packed charms
         uses: actions/upload-artifact@v7
@@ -119,6 +131,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Set up Juju and LXD
         uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
         with:
