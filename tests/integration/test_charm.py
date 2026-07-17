@@ -14,22 +14,24 @@
 
 """End-to-end tests: deploy the charm on a real machine and check nftables.
 
-Deployment is expensive, so the whole lifecycle is exercised as one ordered
-scenario inside a single temporary model rather than split across fixtures.
+Deployment is expensive, so each test is one ordered scenario inside a single
+temporary model. The deploy helpers live in environment.py, which also provides a
+CLI to stand the black-box environment up by hand.
 """
 
-import glob
-import os
-import pathlib
-
 import jubilant
-import pytest
 
-APP = "nftables-operator"
-PRINCIPAL = "ubuntu"
-PRINCIPAL_UNIT = "ubuntu/0"
-# The base to deploy on; CI runs the suite once per supported base via TEST_BASE.
-BASE = os.environ.get("TEST_BASE", "ubuntu@24.04")
+from .environment import (
+    APP,
+    BASE,
+    CHANNEL,
+    PRINCIPAL,
+    PRINCIPAL_UNIT,
+    can_connect,
+    charm_path,
+    deploy_operator,
+    stand_up,
+)
 
 # Each ruleset starts with 'flush ruleset' (so re-application is idempotent) and
 # names its table distinctively so we can recognise it in 'nft list ruleset'.
@@ -54,23 +56,11 @@ GOOD_UPDATED = _ruleset(MARKER_TWO)
 INVALID = "this is definitely not a valid nftables ruleset"
 
 
-def _charm_path() -> str:
-    """Locate the packed charm for BASE.
-
-    'charmcraft pack' emits one file per platform (e.g. ...ubuntu@24.04...), so we
-    select the one matching the base the tests deploy on. CHARM_PATH may point at
-    a specific .charm file (used as-is) or a directory to search; it defaults to
-    the repo root.
-    """
-    version = BASE.split("@", 1)[1]  # e.g. "24.04"
-    env = os.environ.get("CHARM_PATH")
-    if env and os.path.isfile(env):
-        return env
-    search_dir = env if env and os.path.isdir(env) else str(pathlib.Path(__file__).parents[2])
-    matches = sorted(glob.glob(os.path.join(search_dir, f"{APP}_*{version}*.charm")))
-    if not matches:
-        pytest.skip(f"no {version} charm in {search_dir}; run 'charmcraft pack'")
-    return matches[0]
+def _require_local_charm() -> None:
+    """Fail (do not skip) when deploying a local charm that has not been packed."""
+    if CHANNEL:
+        return  # deploying the published charm; no local build needed
+    charm_path()  # raises CharmNotFoundError, failing the test, if not packed
 
 
 def _sub_status(juju: jubilant.Juju):
@@ -102,64 +92,11 @@ def _sub_unit(juju: jubilant.Juju) -> str:
     return next(iter(subordinates))
 
 
-# Black-box (network-level) test topology: one server machine running the charm
-# plus a plain HTTP server, and two client machines. The ruleset lets only the
-# first client reach the server port; everything else to that port is dropped.
-SERVER_PORT = 8000
-
-
-def _server_ruleset(allowed_ip: str) -> str:
-    """A ruleset that accepts port SERVER_PORT only from allowed_ip.
-
-    'policy accept' plus an explicit allow-then-drop for the server port keeps
-    SSH and Juju working while firewalling just the one service.
-    """
-    return (
-        "flush ruleset\n"
-        "table inet filter {\n"
-        "  chain input {\n"
-        "    type filter hook input priority 0; policy accept;\n"
-        "    ct state established,related accept\n"
-        "    iif lo accept\n"
-        "    tcp dport 22 accept\n"
-        f"    tcp dport {SERVER_PORT} ip saddr {allowed_ip} accept\n"
-        f"    tcp dport {SERVER_PORT} drop\n"
-        "  }\n"
-        "}\n"
-    )
-
-
-def _unit_ip(juju: jubilant.Juju, unit: str) -> str:
-    app = unit.split("/")[0]
-    info = juju.status().apps[app].units[unit]
-    return info.public_address or info.address
-
-
-def _connect_cmd(ip: str, port: int, timeout: int) -> str:
-    """Shell command that exits 0 iff a TCP connection to ip:port succeeds."""
-    py = f"import socket; socket.create_connection(('{ip}', {port}), timeout={timeout})"
-    return f'python3 -c "{py}"'
-
-
-def _can_connect(juju: jubilant.Juju, from_unit: str, server_ip: str) -> bool:
-    """Whether from_unit can open a TCP connection to the server port.
-
-    A dropped SYN makes the probe time out and exit non-zero, which jubilant
-    surfaces as TaskError; that is the 'blocked' outcome.
-    """
-    try:
-        juju.exec(_connect_cmd(server_ip, SERVER_PORT, 8), unit=from_unit)
-        return True
-    except jubilant.TaskError:
-        return False
-
-
 def test_nftables_operator_end_to_end():
-    charm = _charm_path()
+    _require_local_charm()
     with jubilant.temp_model() as juju:
         juju.deploy(PRINCIPAL, base=BASE)
-        # Subordinate: deploy without units (they're added via the relation)
-        juju.deploy(charm, base=BASE)
+        deploy_operator(juju, CHANNEL)
         juju.integrate(APP, PRINCIPAL)
 
         # 1. Unconfigured: the subordinate blocks and applies nothing.
@@ -213,45 +150,8 @@ def test_nftables_operator_end_to_end():
 
 def test_firewall_allows_one_source_and_blocks_another():
     """Black box: only the allowed client can reach a server behind the ruleset."""
-    charm = _charm_path()
+    _require_local_charm()
     with jubilant.temp_model() as juju:
-        juju.deploy(PRINCIPAL, "server", base=BASE)
-        juju.deploy(PRINCIPAL, "client", base=BASE, num_units=2)
-        # Subordinate: deploy without units (they're added via the relation).
-        juju.deploy(charm, base=BASE)
-        juju.integrate(APP, "server")
-
-        # Wait for the three machines. The subordinate stays blocked (no rules
-        # yet), so wait on the principals rather than on all-active.
-        juju.wait(
-            lambda s: s.apps["server"].is_active and s.apps["client"].is_active,
-            error=jubilant.any_error,
-            timeout=1200,
-        )
-
-        server_ip = _unit_ip(juju, "server/0")
-        allowed_ip = _unit_ip(juju, "client/0")
-
-        # Start a plain HTTP server on the server machine (a transient systemd
-        # unit so it outlives the exec) and wait until the port is listening.
-        # This happens before any rules are applied, so the firewall is still open.
-        juju.exec(
-            f"systemd-run --unit=blackbox-httpd python3 -m http.server {SERVER_PORT}",
-            unit="server/0",
-        )
-        probe = _connect_cmd("127.0.0.1", SERVER_PORT, 2)
-        juju.exec(
-            f"for _ in $(seq 1 15); do {probe} && break; sleep 1; done",
-            unit="server/0",
-        )
-
-        # Both clients can reach the server before the firewall is configured.
-        assert _can_connect(juju, "client/0", server_ip)
-        assert _can_connect(juju, "client/1", server_ip)
-
-        # Allow only client/0 to the server port; client/1 (and anyone else) is dropped.
-        juju.config(APP, {"rules": _server_ruleset(allowed_ip)})
-        juju.wait(jubilant.all_active, error=jubilant.any_error, timeout=600)
-
-        assert _can_connect(juju, "client/0", server_ip)  # allowed by nft
-        assert not _can_connect(juju, "client/1", server_ip)  # blocked by nft
+        server_ip = stand_up(juju, CHANNEL)
+        assert can_connect(juju, "client/0", server_ip)  # allowed by nft
+        assert not can_connect(juju, "client/1", server_ip)  # blocked by nft

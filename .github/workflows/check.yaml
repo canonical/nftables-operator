@@ -3,6 +3,14 @@ name: Tests
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: >-
+          Charmhub channel to run the integration tests against the published
+          charm (e.g. latest/edge). Leave empty to build and test this branch.
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [main]
@@ -61,6 +69,8 @@ jobs:
 
   build:
     name: Build
+    # Skip the local build when testing an already-published charm.
+    if: ${{ ! inputs.channel }}
     needs:
       - lint
       - unit
@@ -71,7 +81,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up LXD and charmcraft
-        # Pinned to a commit SHA (supply-chain hardening); bump deliberately.
         uses: charmed-kubernetes/actions-operator@d8217ad61c15f746727a9d41563c13e9b9fe56e3  # main
         with:
           provider: "lxd"
@@ -90,7 +99,12 @@ jobs:
     # Run the full suite once per supported base, in parallel.
     name: Integration (${{ matrix.base }})
     needs:
+      - lint
+      - unit
       - build
+    # Run after a successful build, or when the build was skipped to test a
+    # published charm; but not if lint/unit (or a requested build) failed.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -112,6 +126,8 @@ jobs:
           juju-channel: "3.6/stable"
           charmcraft-channel: "3.x/stable"
       - name: Download the packed charms
+        # Only needed when testing a locally built charm.
+        if: ${{ ! inputs.channel }}
         uses: actions/download-artifact@v8
         with:
           name: built_charms_amd64
@@ -119,9 +135,18 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run integration tests
-        # CHARM_PATH is the charm directory; the tests pick the .charm matching
-        # the base under test (TEST_BASE).
+        # With a channel, deploy the published charm; otherwise the local build.
+        # The base and (untrusted) channel go through the environment, not the
+        # script body, to avoid shell injection.
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          BASE: "ubuntu@${{ matrix.base }}"
         run: |
-          export CHARM_PATH="$(pwd)/charms"
-          export TEST_BASE="ubuntu@${{ matrix.base }}"
+          export TEST_BASE="$BASE"
+          if [ -n "$CHANNEL" ]; then
+            printf 'testing the published charm from channel: %s\n' "$CHANNEL"
+            export CHARM_CHANNEL="$CHANNEL"
+          else
+            export CHARM_PATH="$(pwd)/charms"
+          fi
           pytest tests/integration

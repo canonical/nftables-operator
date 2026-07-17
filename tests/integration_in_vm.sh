@@ -1,26 +1,39 @@
 #!/usr/bin/env bash
-# Run the integration tests inside an LXD virtual machine, so the host only ever
-# needs LXD. The VM gets its own juju, charmcraft and (nested) LXD, bootstraps a
-# controller, and runs tests/integration_on_host.sh.
+# Run integration actions inside a disposable LXD virtual machine, so the host
+# only ever needs LXD. The VM gets its own juju, charmcraft and (nested) LXD,
+# bootstraps a controller, and runs tests/integration_on_host.sh inside it.
 #
-# Usage:
-#   tests/integration_in_vm.sh [pytest args...]   one-shot: up, test, down
-#   tests/integration_in_vm.sh up                 create/start the VM, leave it up
-#   tests/integration_in_vm.sh test [pytest args] run the tests in the VM (repeatable)
-#   tests/integration_in_vm.sh down               delete the VM (keeps cached image)
-#   tests/integration_in_vm.sh shell              open a shell in the VM as 'ubuntu'
+# Actions (each brings the VM up first, then runs inside it):
+#   tests/integration_in_vm.sh [options] [pytest args]      one-shot: up, test, down
+#   tests/integration_in_vm.sh test [options] [pytest args] run the test suite
+#   tests/integration_in_vm.sh standup [options]            stand up the black-box env
+#   tests/integration_in_vm.sh teardown [options]           tear down the black-box env
 #
-# Iterate quickly (the VM stays up between runs, so charmcraft's build instance
-# and the packed charm are reused; each 'test' re-syncs your working tree):
-#   tests/integration_in_vm.sh up
-#   tests/integration_in_vm.sh test -k firewall     # repeat as you edit tests
-#   REPACK=1 tests/integration_in_vm.sh test        # repack after charm changes
-#   tests/integration_in_vm.sh down
+# VM lifecycle:
+#   tests/integration_in_vm.sh up [options]                 create/start the VM
+#   tests/integration_in_vm.sh shell                        shell into the VM as 'ubuntu'
+#   tests/integration_in_vm.sh down [--purge]               delete the VM
 #
-# Everything lives in a dedicated LXD project ("charm-integration-tests"). The
-# first 'up' provisions the VM (snaps + 'juju bootstrap') and publishes it as a
-# cached image; later 'up's launch from that image, skipping the slow setup. The
-# cached image and project persist until 'down' with PURGE=1.
+# Options:
+#   --base BASE        deploy on this base (default: ubuntu@24.04)
+#   --channel CHANNEL  test/standup against the published charm from this Charmhub
+#                      channel (e.g. latest/edge) instead of a local pack
+#   --repack           force a fresh local pack
+#   --rebuild-image    rebuild the cached VM base image before starting
+#   --keep             (one-shot) leave the VM up instead of deleting it afterwards
+#   --purge            (down) also remove the cached image and the LXD project
+#
+# For example:
+#   tests/integration_in_vm.sh test --channel latest/edge -k firewall
+#   tests/integration_in_vm.sh test --base ubuntu@26.04
+#   tests/integration_in_vm.sh standup
+#   tests/integration_in_vm.sh teardown
+#
+# The VM stays up between actions, so charmcraft's build instance and the packed
+# charm are reused and each action re-syncs your working tree. Everything lives in
+# a dedicated LXD project ("charm-integration-tests"); the first 'up' provisions
+# the VM (snaps + 'juju bootstrap') and publishes it as a cached image, so later
+# 'up's skip the slow setup. The image and project persist until 'down --purge'.
 #
 # A VM (not a container) is used on purpose: it has its own kernel, so nftables
 # and the multi-machine networking the tests exercise behave exactly as on a real
@@ -29,8 +42,8 @@
 # (commonly a Docker + LXD firewall conflict on the host) the run aborts with the
 # nft rules needed to fix it.
 #
-# Env: PROJECT SANDBOX IMAGE CACHE_ALIAS CPU MEMORY DISK JUJU_CHANNEL
-#      CHARMCRAFT_CHANNEL REBUILD_IMAGE REPACK KEEP PURGE
+# Advanced tuning (environment variables): PROJECT SANDBOX IMAGE CACHE_ALIAS CPU
+#      MEMORY DISK JUJU_CHANNEL CHARMCRAFT_CHANNEL
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -274,18 +287,26 @@ ensure_deps() {
         && .venv/bin/pip install --quiet -e ".[dev]"'
 }
 
-# Sync the latest source and run the tests. Reuses the packed charm unless REPACK
-# is set; forward it (and the pytest args) into the ubuntu login session.
-run_tests() {
+# Run an integration_on_host.sh action (test/standup/teardown) inside the VM,
+# forwarding the relevant env vars and any extra args. The VM is brought up and
+# the working tree re-synced first.
+run_action() {
+    local action="$1"
+    shift
     bring_up
     sync_source
     ensure_deps
-    log "running integration tests inside the VM..."
+    log "running '${action}' inside the VM..."
+
+    # Forward only the env vars that are set (an empty TEST_BASE would override
+    # the test's default). su - resets the environment, so export inside the shell.
     local script='cd ~/charm && . .venv/bin/activate'
-    script+=" && export REPACK='${REPACK:-}'"
+    [ -n "${TEST_BASE:-}" ] && script+=" && export TEST_BASE='${TEST_BASE}'"
+    [ -n "${CHARM_CHANNEL:-}" ] && script+=" && export CHARM_CHANNEL='${CHARM_CHANNEL}'"
+    [ -n "${REPACK:-}" ] && script+=" && export REPACK='${REPACK}'"
     # 'su - ubuntu -c CMD arg0 args...' passes args to the shell running CMD, so
-    # the leading 'bash' becomes $0 and the pytest args become "$@".
-    script+=' && exec bash tests/integration_on_host.sh "$@"'
+    # the leading 'bash' becomes $0 and the extra args become "$@".
+    script+=" && exec bash tests/integration_on_host.sh ${action} \"\$@\""
     lxp exec "${SANDBOX}" -- su - ubuntu -c "${script}" bash "$@"
 }
 
@@ -294,7 +315,7 @@ destroy() {
     log "deleting sandbox VM ${SANDBOX} (cached image ${CACHE_ALIAS} kept)..."
     lxp delete --force "${SANDBOX}" >/dev/null 2>&1 || true
     if [ -n "${PURGE:-}" ]; then
-        log "PURGE set; removing cached image ${CACHE_ALIAS} and project ${PROJECT}..."
+        log "--purge given; removing cached image ${CACHE_ALIAS} and project ${PROJECT}..."
         lxp image list -f csv -c f 2>/dev/null | while read -r fingerprint; do
             [ -n "${fingerprint}" ] && lxp image delete "${fingerprint}" >/dev/null 2>&1 || true
         done
@@ -313,13 +334,44 @@ usage() {
 }
 
 # --- dispatch ---------------------------------------------------------------
-case "${1:-}" in
+# Subcommand first (default: one-shot). Then parse our own flags; anything else
+# (--base/--channel/--repack, pytest args) is forwarded to integration_on_host.sh.
+action="${1:-oneshot}"
+case "${action}" in
+up | test | standup | teardown | down | shell)
+    shift
+    ;;
+-h | --help | help)
+    usage
+    exit 0
+    ;;
+"" | -*)
+    action="oneshot" # no subcommand: one-shot (up, test, down)
+    ;;
+*)
+    echo "error: unknown subcommand '${action}'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
+forward=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --keep) KEEP=1 ;;
+    --purge) PURGE=1 ;;
+    --rebuild-image) REBUILD_IMAGE=1 ;;
+    *) forward+=("$1") ;;
+    esac
+    shift
+done
+
+case "${action}" in
 up)
     bring_up
     ;;
-test)
-    shift
-    run_tests "$@"
+test | standup | teardown)
+    run_action "${action}" "${forward[@]}"
     ;;
 down)
     destroy
@@ -327,25 +379,16 @@ down)
 shell)
     open_shell
     ;;
--h | --help | help)
-    usage
-    ;;
-"" | -*)
-    # One-shot: bring up, run the tests (all args are pytest args), then tear
-    # down unless KEEP is set.
+oneshot)
+    # Bring up, run the test suite, then tear down the VM unless --keep was given.
     cleanup() {
         if [ -n "${KEEP:-}" ]; then
-            log "KEEP set; leaving ${SANDBOX} up (remove it with: $0 down)"
+            log "--keep set; leaving ${SANDBOX} up (remove it with: $0 down)"
         else
             destroy
         fi
     }
     trap cleanup EXIT
-    run_tests "$@"
-    ;;
-*)
-    echo "error: unknown subcommand '$1'" >&2
-    usage >&2
-    exit 1
+    run_action test "${forward[@]}"
     ;;
 esac
