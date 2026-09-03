@@ -1,0 +1,9 @@
+# .reposcan-ignore
+#   <tool>  <ruleId>  <path-glob>  [<content pattern>]
+
+# silence zizmor and semgrep warnings about unpinned tag on first-party action
+zizmor   zizmor/unpinned-uses  .github/workflows/*.yml  "uses: canonical/reposcan@main"
+semgrep  *mutable-action-tag   .github/workflows/*.yml  "uses: canonical/reposcan@main"
+
+# test fixture(s)
+trufflehog PrivateKey tests/unit/auth/test_*key.pem
