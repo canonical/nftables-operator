@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   check:
-    uses: ./.github/workflows/check.yaml
+    uses: $/.github/workflows/check.yaml
 
   release:
     needs: check
