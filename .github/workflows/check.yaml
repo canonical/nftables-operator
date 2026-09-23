@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@ece7cb06caefa5fff74198d8649806c4678c61a1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Set up Python
@@ -55,7 +55,7 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@ece7cb06caefa5fff74198d8649806c4678c61a1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Set up Python ${{ matrix.python-version }}
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@ece7cb06caefa5fff74198d8649806c4678c61a1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       # Reuse a previously packed charm when nothing that affects it changed.
@@ -124,7 +124,7 @@ jobs:
       matrix:
         base: ["22.04", "24.04", "26.04"]
     steps:
-      - uses: actions/checkout@ece7cb06caefa5fff74198d8649806c4678c61a1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Set up Python
