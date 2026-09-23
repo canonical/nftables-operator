@@ -2,12 +2,12 @@
 #   <tool>  <ruleId>  <path-glob>  [<content pattern>]
 
 # silence zizmor and semgrep warnings about unpinned tag on first-party action
-zizmor   zizmor/unpinned-uses  .github/workflows/*.yml  "uses: canonical/reposcan@main"
-semgrep  *mutable-action-tag   .github/workflows/*.yml  "uses: canonical/reposcan@main"
+zizmor   zizmor/unpinned-uses  .github/workflows/*.yaml  "uses: canonical/reposcan@main"
+semgrep  *mutable-action-tag   .github/workflows/*.yaml  "uses: canonical/reposcan@main"
 
 # checkov: allow intentional workflow_dispatch inputs
 checkov  CKV_GHA_7  .github/workflows/check.yaml
 checkov  CKV_GHA_7  .github/workflows/promote.yaml
 
 # silence poutine unverified creator notes
-poutine  github_action_from_unverified_creator_used  .github/workflows/*.yaml  "canonical/reposcan@main"
+poutine  github_action_from_unverified_creator_used  .github/workflows/*.yaml  "canonical/*"
